@@ -1,0 +1,46 @@
+name: Check BOOTH stock
+
+# 1回の実行で約55分間、60秒ごとに在庫を確認する。
+# 5分おきの起動は「次の実行」を待機させておくためのもので、
+# concurrency により同時に動くのは常に1つだけ（余分な待機分は自動キャンセルされる）。
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # state.json をコミットするため
+
+concurrency:
+  group: check-stock
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}  # 起動時点ではなく最新の state.json を使う
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check stock
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_MINUTES: "55"
+        run: python check_stock.py
+
+      - name: Save state
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update stock state"
+            git push
+          fi
