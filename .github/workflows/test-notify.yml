@@ -1,0 +1,34 @@
+name: Test Discord notification
+
+# Discord に届くかを確認するためのテスト通知を1回だけ送る（手動実行専用）。
+on:
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send test notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          import check_stock as c
+
+          item, variations = c.fetch_stock(c.ITEM_IDS[0])
+          sample = next(iter(variations.values()))
+          c.notify_discord(
+              os.environ["DISCORD_WEBHOOK_URL"],
+              item,
+              [{"name": f"{sample['name']}（これはテスト通知です。実際の在庫は変わっていません）", "price": sample["price"]}],
+          )
+          print("テスト通知を送信しました")
+          PY
