@@ -1,7 +1,8 @@
 name: Check BOOTH stock
 
-# 1回の実行で約55分間、60秒ごとに在庫を確認する。
-# 5分おきの起動は「次の実行」を待機させておくためのもので、
+# 1回の実行で約5時間半、60秒ごとに在庫を確認し、終わる直前に次の実行を自分で起動する。
+# GitHub の定期実行（cron）は混雑時に数時間おきまで間引かれるため当てにせず、
+# 途切れたときの再開用の予備としてだけ使う。
 # concurrency により同時に動くのは常に1つだけ（余分な待機分は自動キャンセルされる）。
 on:
   schedule:
@@ -10,6 +11,7 @@ on:
 
 permissions:
   contents: write  # state.json をコミットするため
+  actions: write   # 次の実行を起動するため
 
 concurrency:
   group: check-stock
@@ -18,7 +20,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 355  # GitHub の上限は 360 分
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,16 +33,26 @@ jobs:
       - name: Check stock
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          RUN_MINUTES: "55"
+          RUN_MINUTES: "330"
         run: python check_stock.py
 
       - name: Save state
-        if: always()
+        if: success() || failure()
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain state.json)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
             git add state.json
             git commit -m "Update stock state"
-            git push
+          elif [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt $(( 30 * 86400 )) ]; then
+            # 公開リポジトリは 60 日間コミットがないとワークフローが止められるため
+            git commit --allow-empty -m "Keep workflow alive"
           fi
+          git push
+
+      # 手動でキャンセルしたときは連鎖を止めたいので always() は使わない
+      - name: Start next run
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run check-stock.yml --ref ${{ github.ref_name }}
